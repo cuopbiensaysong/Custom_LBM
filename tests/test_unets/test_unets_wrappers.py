@@ -76,7 +76,7 @@ class TestDiffusersUNet2DCondWrapper:
     # simulates a latent sample
     @pytest.fixture()
     def sample(self):
-        return torch.rand(2, 6, 32, 32).to(DEVICE)
+        return torch.rand(2, 4, 40, 40).to(DEVICE)
 
     # simulates a timestep
     @pytest.fixture(
