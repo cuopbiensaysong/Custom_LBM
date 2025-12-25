@@ -18,19 +18,9 @@ from pytorch_lightning import Trainer, loggers
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.strategies import FSDPStrategy
 from torch.distributed.fsdp.wrap import ModuleWrapPolicy
-from torchvision.transforms import InterpolationMode
 
-from lbm.data.datasets import DataModule, DataModuleConfig
-from lbm.data.filters import KeyFilter, KeyFilterConfig
-from lbm.data.mappers import (
-    KeyRenameMapper,
-    KeyRenameMapperConfig,
-    MapperWrapper,
-    RescaleMapper,
-    RescaleMapperConfig,
-    TorchvisionMapper,
-    TorchvisionMapperConfig,
-)
+from lbm.data.datasets import MedicalImageTranslationDataModule
+
 from lbm.models.embedders import (
     ConditionerWrapper,
     LatentsConcatEmbedder,
@@ -38,7 +28,7 @@ from lbm.models.embedders import (
 )
 from lbm.models.lbm import LBMConfig, LBMModel
 from lbm.models.unets import DiffusersUNet2DCondWrapper
-from lbm.models.vae import AutoencoderKLDiffusers, AutoencoderKLDiffusersConfig
+from lbm.models.vae import VQGANLBMWrapper
 from lbm.trainer import TrainingConfig, TrainingPipeline
 from lbm.trainer.loggers import WandbSampleLogger
 from lbm.trainer.utils import StateDictAdapter
@@ -48,14 +38,14 @@ def get_model(
     backbone_signature: str = "stabilityai/stable-diffusion-xl-base-1.0",
     vae_num_channels: int = 4,
     unet_input_channels: int = 4,
-    timestep_sampling: str = "log_normal",
-    selected_timesteps: Optional[List[float]] = None,
-    prob: Optional[List[float]] = None,
+    timestep_sampling: str = "log_normal", # TODO 
+    selected_timesteps: Optional[List[float]] = None, # TODO 
+    prob: Optional[List[float]] = None, # TODO 
     conditioning_images_keys: Optional[List[str]] = [],
     conditioning_masks_keys: Optional[List[str]] = [],
-    source_key: str = "source_image",
-    target_key: str = "source_image_paste",
-    mask_key: str = "mask",
+    source_key: str = "bl",
+    target_key: str = "m36",
+    mask_key: str = "mask", # TODO 
     bridge_noise_sigma: float = 0.0,
     logit_mean: float = 0.0,
     logit_std: float = 1.0,
@@ -169,16 +159,13 @@ def get_model(
         conditioners=conditioners,
     )
 
-    ## VAE ##
-    # Get VAE model
-    vae_config = AutoencoderKLDiffusersConfig(
-        version=backbone_signature,
-        subfolder="vae",
-        tiling_size=(128, 128),
-    )
-    vae = AutoencoderKLDiffusers(vae_config)
-    vae.freeze()
-    vae.to(torch.bfloat16)
+    
+    
+    vqgan_config_path = "src/lbm/models/vae/vqgan.yaml"
+    vqgan_checkpoint_path = "src/lbm/models/vae/vqgan.ckpt"
+    vqgan = VQGANLBMWrapper(vqgan_config_path, vqgan_checkpoint_path)
+    vqgan.freeze()
+    vqgan = vqgan.to(torch.bfloat16)
 
     # LBM Config
     config = LBMConfig(
@@ -213,141 +200,11 @@ def get_model(
         denoiser=denoiser,
         training_noise_scheduler=training_noise_scheduler,
         sampling_noise_scheduler=sampling_noise_scheduler,
-        vae=vae,
+        vae=vqgan,
         conditioner=conditioner,
     ).to(torch.bfloat16)
 
     return model
-
-
-def get_filter_mappers():
-    filters_mappers = [
-        KeyFilter(KeyFilterConfig(keys=["jpg", "normal_aligned.png", "mask.png"])),
-        MapperWrapper(
-            [
-                KeyRenameMapper(
-                    KeyRenameMapperConfig(
-                        key_map={
-                            "jpg": "image",
-                            "normal_aligned.png": "normal",
-                            "mask.png": "mask",
-                        }
-                    )
-                ),
-                TorchvisionMapper(
-                    TorchvisionMapperConfig(
-                        key="image",
-                        transforms=["ToTensor", "Resize"],
-                        transforms_kwargs=[
-                            {},
-                            {
-                                "size": (480, 640),
-                                "interpolation": InterpolationMode.NEAREST_EXACT,
-                            },
-                        ],
-                    )
-                ),
-                TorchvisionMapper(
-                    TorchvisionMapperConfig(
-                        key="normal",
-                        transforms=["ToTensor", "Resize"],
-                        transforms_kwargs=[
-                            {},
-                            {
-                                "size": (480, 640),
-                                "interpolation": InterpolationMode.NEAREST_EXACT,
-                            },
-                        ],
-                    )
-                ),
-                TorchvisionMapper(
-                    TorchvisionMapperConfig(
-                        key="mask",
-                        transforms=["ToTensor", "Resize", "Normalize"],
-                        transforms_kwargs=[
-                            {},
-                            {
-                                "size": (480, 640),
-                                "interpolation": InterpolationMode.NEAREST_EXACT,
-                            },
-                            {"mean": 0.0, "std": 1.0},
-                        ],
-                    )
-                ),
-                RescaleMapper(RescaleMapperConfig(key="image")),
-                RescaleMapper(RescaleMapperConfig(key="normal")),
-            ],
-        ),
-    ]
-
-    return filters_mappers
-
-
-def get_data_module(
-    train_shards: List[str],
-    validation_shards: List[str],
-    batch_size: int,
-):
-
-    # TRAIN
-    train_filters_mappers = get_filter_mappers()
-
-    # unbrace urls
-    train_shards_path_or_urls_unbraced = []
-    for train_shards_path_or_url in train_shards:
-        train_shards_path_or_urls_unbraced.extend(
-            braceexpand.braceexpand(train_shards_path_or_url)
-        )
-
-    # shuffle shards
-    random.shuffle(train_shards_path_or_urls_unbraced)
-
-    # data config
-    data_config = DataModuleConfig(
-        shards_path_or_urls=train_shards_path_or_urls_unbraced,
-        decoder="pil",
-        shuffle_before_split_by_node_buffer_size=20,
-        shuffle_before_split_by_workers_buffer_size=20,
-        shuffle_before_filter_mappers_buffer_size=20,
-        shuffle_after_filter_mappers_buffer_size=20,
-        per_worker_batch_size=batch_size,
-        num_workers=min(10, len(train_shards_path_or_urls_unbraced)),
-    )
-
-    train_data_config = data_config
-
-    # VALIDATION
-    validation_filters_mappers = get_filter_mappers()
-
-    # unbrace urls
-    validation_shards_path_or_urls_unbraced = []
-    for validation_shards_path_or_url in validation_shards:
-        validation_shards_path_or_urls_unbraced.extend(
-            braceexpand.braceexpand(validation_shards_path_or_url)
-        )
-
-    data_config = DataModuleConfig(
-        shards_path_or_urls=validation_shards_path_or_urls_unbraced,
-        decoder="pil",
-        shuffle_before_split_by_node_buffer_size=10,
-        shuffle_before_split_by_workers_buffer_size=10,
-        shuffle_before_filter_mappers_buffer_size=10,
-        shuffle_after_filter_mappers_buffer_size=10,
-        per_worker_batch_size=batch_size,
-        num_workers=min(10, len(train_shards_path_or_urls_unbraced)),
-    )
-
-    validation_data_config = data_config
-
-    # data module
-    data_module = DataModule(
-        train_config=train_data_config,
-        train_filters_mappers=train_filters_mappers,
-        eval_config=validation_data_config,
-        eval_filters_mappers=validation_filters_mappers,
-    )
-
-    return data_module
 
 
 def main(
@@ -356,8 +213,8 @@ def main(
     backbone_signature: str = "stabilityai/stable-diffusion-xl-base-1.0",
     vae_num_channels: int = 4, # ?
     unet_input_channels: int = 4,
-    source_key: str = "image", # ?
-    target_key: str = "normal", # ?
+    source_key: str = "bl", # ?
+    target_key: str = "m36", # ?
     mask_key: str = "mask",
     wandb_project: str = "lbm-surface",
     batch_size: int = 8,
@@ -408,11 +265,7 @@ def main(
         bridge_noise_sigma=bridge_noise_sigma,
     )
 
-    data_module = get_data_module(
-        train_shards=train_shards,
-        validation_shards=validation_shards,
-        batch_size=batch_size,
-    )
+    
 
     train_parameters = ["denoiser.*"]
 
@@ -529,6 +382,17 @@ def main(
         val_check_interval=1000,
         max_epochs=max_epochs,
     )
+
+    # data 
+    train_csv = "/mnt/disk2/htien/LBM/data/train.csv" # TODO 
+    val_csv = "data/val.csv" # TODO 
+    data_module = MedicalImageTranslationDataModule(
+        train_csv=train_csv,
+        val_csv=val_csv,
+        batch_size=batch_size,
+        num_workers=8,
+    )
+    data_module.setup()
 
     trainer.fit(pipeline, data_module, ckpt_path=start_ckpt)
 

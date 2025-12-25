@@ -101,32 +101,32 @@ class LBMModel(BaseModel):
         if self.vae is not None:
             vae_inputs = batch[self.target_key]
             z = self.vae.encode(vae_inputs)
-            downsampling_factor = self.vae.downsampling_factor
+            # downsampling_factor = self.vae.downsampling_factor
         else:
             z = batch[self.target_key]
-            downsampling_factor = 1
+            # downsampling_factor = 1
 
-        if self.mask_key in batch:
-            valid_mask = batch[self.mask_key].bool()[:, 0, :, :].unsqueeze(1)
-            invalid_mask = ~valid_mask
-            valid_mask_for_latent = ~torch.max_pool2d(
-                invalid_mask.float(),
-                downsampling_factor,
-                downsampling_factor,
-            ).bool()
-            valid_mask_for_latent = valid_mask_for_latent.repeat((1, z.shape[1], 1, 1))
+        # if self.mask_key in batch:
+        #     valid_mask = batch[self.mask_key].bool()[:, 0, :, :].unsqueeze(1)
+        #     invalid_mask = ~valid_mask
+        #     valid_mask_for_latent = ~torch.max_pool2d(
+        #         invalid_mask.float(),
+        #         downsampling_factor,
+        #         downsampling_factor,
+        #     ).bool()
+        #     valid_mask_for_latent = valid_mask_for_latent.repeat((1, z.shape[1], 1, 1))
 
-        else:
-            valid_mask = torch.ones_like(batch[self.target_key]).bool()
-            valid_mask_for_latent = torch.ones_like(z).bool()
+        # else:
+        valid_mask = torch.ones_like(batch[self.target_key]).bool() # TODO check valid_mask
+        valid_mask_for_latent = torch.ones_like(z).bool() # TODO check valid_mask_for_latent
 
         source_image = batch[self.source_key]
-        source_image = torch.nn.functional.interpolate(
-            source_image,
-            size=batch[self.target_key].shape[-2:],
-            mode="bilinear",
-            align_corners=False,
-        ).to(z.dtype)
+        # source_image = torch.nn.functional.interpolate(
+        #     source_image,
+        #     size=batch[self.target_key].shape[-2:],
+        #     mode="bilinear",
+        #     align_corners=False,
+        # ).to(z.dtype)
         if self.vae is not None:
             z_source = self.vae.encode(source_image)
 
@@ -134,16 +134,16 @@ class LBMModel(BaseModel):
             z_source = source_image
 
         # Get conditionings
-        conditioning = self._get_conditioning(batch, *args, **kwargs)
+        conditioning = self._get_conditioning(batch, *args, **kwargs) # TODO check conditioning
 
         # Sample a timestep
-        timestep = self._timestep_sampling(n_samples=z.shape[0], device=z.device)
-        sigmas = None
+        timestep = self._timestep_sampling(n_samples=z.shape[0], device=z.device) # TODO check timestep
+        sigmas = None # ? check sigmas
 
         # Create interpolant
         sigmas = self._get_sigmas(
             self.training_noise_scheduler, timestep, n_dim=4, device=z.device
-        )
+        ) # TODO check sigmas
         noisy_sample = (
             sigmas * z_source
             + (1.0 - sigmas) * z
@@ -280,7 +280,7 @@ class LBMModel(BaseModel):
             ),
         ]
 
-        decoded_prediction = self.vae.decode(prediction).clamp(-1, 1)
+        decoded_prediction = self.vae.decode(prediction)# .clamp(-1, 1) # TODO check decoded_prediction
 
         if self.pixel_loss_type == "l2":
             return torch.mean(
@@ -488,19 +488,19 @@ class LBMModel(BaseModel):
 
         for num_step in num_steps:
             source_image = batch[self.source_key]
-            source_image = torch.nn.functional.interpolate(
-                source_image,
-                size=batch[self.target_key].shape[2:],
-                mode="bilinear",
-                align_corners=False,
-            ).to(dtype=self.dtype)
+            # source_image = torch.nn.functional.interpolate(
+            #     source_image,
+            #     size=batch[self.target_key].shape[2:],
+            #     mode="bilinear",
+            #     align_corners=False,
+            # ).to(dtype=self.dtype)
             if self.vae is not None:
                 z = self.vae.encode(source_image)
 
             else:
                 z = source_image
 
-            with torch.autocast(dtype=self.dtype, device_type="cuda"):
+            with torch.autocast(dtype=self.dtype, device_type="cuda"): # TODO check dtype
                 logs[f"samples_{num_step}_steps"] = self.sample(
                     z,
                     num_steps=num_step,

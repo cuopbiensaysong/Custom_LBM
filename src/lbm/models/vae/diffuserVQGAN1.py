@@ -70,14 +70,13 @@ class VQGANLBMWrapper(ModelMixin, ConfigMixin):
         vqgan_checkpoint_path: str = None,
         scaling_factor: float = 1.0, 
         use_quantized_latents: bool = True,
-        force_input_channels: Optional[int] = None
+        # force_input_channels: Optional[int] = None
     ):
         super().__init__()
         self.scaling_factor = scaling_factor
         self.use_quantized_latents = use_quantized_latents
-        self.force_input_channels = force_input_channels
-        # Mean: [-0.03646181896328926, 0.015901772305369377, -0.02612009085714817, -0.023668786510825157]
-        # Std: [0.6274713277816772, 0.44813016057014465, 0.5477502346038818, 0.392182320356369]
+        # self.force_input_channels = force_input_channels
+        self.downsampling_factor = 4 # TODO 
 
 
 
@@ -114,6 +113,32 @@ class VQGANLBMWrapper(ModelMixin, ConfigMixin):
         # In LBM, the autoencoder is a frozen perceptual compression stage.
         self.model.eval()
         self.model.requires_grad_(False)
+    
+    def to(self, dtype: torch.dtype):
+        self.model.to(dtype)
+        self.latents_mean = self.latents_mean.to(dtype)
+        self.latents_std = self.latents_std.to(dtype)
+        # self.scaling_factor = self.scaling_factor.to(dtype)
+        return self
+    
+    def to(self, device: torch.device):
+        self.model.to(device)
+        self.latents_mean = self.latents_mean.to(device)
+        self.latents_std = self.latents_std.to(device)
+        # self.scaling_factor = self.scaling_factor.to(device)
+        return self
+
+    def on_fit_start(self, device: torch.device | None = None, *args, **kwargs):
+        self.to(device)
+    
+
+    def freeze(self):
+        self.model.eval()
+        self.model.requires_grad_(False)
+        self.latents_mean.requires_grad_(False)
+        self.latents_std.requires_grad_(False)
+        self.scaling_factor.requires_grad_(False)
+        return self
 
     def encode(self, x: torch.Tensor, return_dict: bool = True) -> Union[torch.Tensor, tuple]:
         """
