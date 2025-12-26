@@ -57,6 +57,6 @@ The :mod:`cr.data` includes the following submodules:
 
 """
 
-from .datasets import DataModule
+from .datasets import MedicalImageTranslationDataModule
 
-__all__ = ["DataModule"]
+__all__ = ["MedicalImageTranslationDataModule"]

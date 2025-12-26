@@ -91,9 +91,10 @@ class VQGANLBMWrapper(ModelMixin, ConfigMixin):
             vqgan_config = OmegaConf.load(vqgan_config_path)
         except Exception as e:
             raise ValueError(f"Failed to load VQGAN config: {e}")
-
+        # self.config = vqgan_config
         # Initialize the underlying VQModel
         print(" Initializing VQModel...")
+        self.config_vqgan = vqgan_config
         model_params = self._extract_model_params(vqgan_config)
         self.model = VQModel(**model_params)
         
@@ -137,7 +138,7 @@ class VQGANLBMWrapper(ModelMixin, ConfigMixin):
         self.model.requires_grad_(False)
         self.latents_mean.requires_grad_(False)
         self.latents_std.requires_grad_(False)
-        self.scaling_factor.requires_grad_(False)
+        # self.scaling_factor.requires_grad_(False)
         return self
 
     def encode(self, x: torch.Tensor, return_dict: bool = True) -> Union[torch.Tensor, tuple]:
@@ -148,16 +149,11 @@ class VQGANLBMWrapper(ModelMixin, ConfigMixin):
         # --- 1-Channel Input Handling Strategy ---
         # If the input is 1-channel (B, 1, H, W) but the model expects 3 (RGB),
         # we replicate the channel dimension.
-        expected_channels = self.model.encoder.conv_in.in_channels
-        if x.shape[1]!= expected_channels:
-            # if x.shape[1] == 1 and expected_channels == 3:
-            #     # Replicate grayscale to RGB
-            #     x = x.repeat(1, 3, 1, 1)
-            # elif self.force_input_channels is not None and x.shape[1]!= self.force_input_channels:
-            #      raise ValueError(f"Input channel mismatch: Got {x.shape[1]}, expected {expected_channels} or {self.force_input_channels}")
-            raise ValueError(f"Input channel mismatch: Got {x.shape[1]}, expected {expected_channels}")
+        # expected_channels = self.model.encoder.conv_in.in_channels
+
         # --- VQGAN Encoding Pass ---
         # 1. Convolutional Encoder
+        x = x.to(device=self.device, dtype=self.dtype)
         h = self.model.encoder(x)
         # 2. Pre-quantization Convolution (adjusts dimensions for codebook)
         h = self.model.quant_conv(h)
@@ -172,7 +168,7 @@ class VQGANLBMWrapper(ModelMixin, ConfigMixin):
             latent = h
 
         if self.latents_mean is not None and self.latents_std is not None:
-            latents = (latents - self.latents_mean) / self.latents_std
+            latent = (latent - self.latents_mean) / self.latents_std
 
         # # --- Interface Adaptation ---
         # # Wrap in the dummy distribution object
@@ -194,6 +190,8 @@ class VQGANLBMWrapper(ModelMixin, ConfigMixin):
         
         # VQGAN decoder expects post-quantized embeddings.
         # We pass through post_quant_conv to map from latent dim back to decoder dim.
+
+        z = z.to(device=self.device, dtype=self.dtype)
 
         if self.latents_mean is not None and self.latents_std is not None:
             z = z * self.latents_std + self.latents_mean

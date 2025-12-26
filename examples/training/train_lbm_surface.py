@@ -1,6 +1,7 @@
 import datetime
 import logging
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import random
 import re
 import shutil
@@ -10,6 +11,7 @@ import braceexpand
 import fire
 import torch
 import yaml
+from omegaconf import OmegaConf
 from diffusers import FlowMatchEulerDiscreteScheduler, StableDiffusionXLPipeline
 from diffusers.models import UNet2DConditionModel
 from diffusers.models.attention import BasicTransformerBlock
@@ -33,6 +35,13 @@ from lbm.trainer import TrainingConfig, TrainingPipeline
 from lbm.trainer.loggers import WandbSampleLogger
 from lbm.trainer.utils import StateDictAdapter
 
+import debugpy
+
+debugpy.listen(5678)
+print("Waiting for debugger attach")
+debugpy.wait_for_client()
+print("Debugger attached")
+
 
 def get_model(
     backbone_signature: str = "stabilityai/stable-diffusion-xl-base-1.0",
@@ -45,7 +54,7 @@ def get_model(
     conditioning_masks_keys: Optional[List[str]] = [],
     source_key: str = "bl",
     target_key: str = "m36",
-    mask_key: str = "mask", # TODO 
+    mask_key: str = "mask", # checked 
     bridge_noise_sigma: float = 0.0,
     logit_mean: float = 0.0,
     logit_std: float = 1.0,
@@ -157,12 +166,12 @@ def get_model(
     # Wrap conditioners and set to device
     conditioner = ConditionerWrapper(
         conditioners=conditioners,
-    )
+    ) # TODO
 
     
     
     vqgan_config_path = "src/lbm/models/vae/vqgan.yaml"
-    vqgan_checkpoint_path = "src/lbm/models/vae/vqgan.ckpt"
+    vqgan_checkpoint_path = "/home/huutien/vqgan/taming-transformers/logs/2025-12-23T16-12-31_custom_v4/checkpoints/epoch=000135.ckpt"
     vqgan = VQGANLBMWrapper(vqgan_config_path, vqgan_checkpoint_path)
     vqgan.freeze()
     vqgan = vqgan.to(torch.bfloat16)
@@ -208,15 +217,15 @@ def get_model(
 
 
 def main(
-    train_shards: List[str] = ["pipe:cat path/to/train/shards"],
-    validation_shards: List[str] = ["pipe:cat path/to/validation/shards"],
+    train_csv: str = "/home/huutien/5_folds_split_2D/fold_1_train_2d.csv",
+    val_csv: str = "/home/huutien/5_folds_split_2D/fold_1_val_2d.csv",
     backbone_signature: str = "stabilityai/stable-diffusion-xl-base-1.0",
-    vae_num_channels: int = 4, # ?
+    vae_num_channels: int = 4,
     unet_input_channels: int = 4,
-    source_key: str = "bl", # ?
-    target_key: str = "m36", # ?
-    mask_key: str = "mask",
-    wandb_project: str = "lbm-surface",
+    source_key: str = "bl", 
+    target_key: str = "m36", 
+    mask_key: str = "mask", # TODO 
+    wandb_project: str = "lbm-ADNI-flows",
     batch_size: int = 8,
     num_steps: List[int] = [1, 2, 4], # ?
     learning_rate: float = 5e-5,
@@ -224,18 +233,18 @@ def main(
     learning_rate_scheduler_kwargs: dict = {},
     optimizer: str = "AdamW",
     optimizer_kwargs: dict = {},
-    timestep_sampling: str = "uniform",
-    logit_mean: float = 0.0, # ?
-    logit_std: float = 1.0, # ?
-    pixel_loss_type: str = "lpips",
-    latent_loss_type: str = "l2",
-    latent_loss_weight: float = 1.0,
-    pixel_loss_weight: float = 0.0,
-    selected_timesteps: List[float] = None,
-    prob: List[float] = None,
-    conditioning_images_keys: Optional[List[str]] = [],
-    conditioning_masks_keys: Optional[List[str]] = [],
-    config_yaml: dict = None,
+    timestep_sampling: str = "custom_timesteps", # TODO
+    logit_mean: float = 0.0, # TODO
+    logit_std: float = 1.0, # TODO
+    pixel_loss_type: str = "lpips", # TODO
+    latent_loss_type: str = "l2", # TODO
+    latent_loss_weight: float = 1.0, # TODO
+    pixel_loss_weight: float = 0.0, # TODO
+    selected_timesteps: List[float] = None, # TODO
+    prob: List[float] = None, # TODO
+    conditioning_images_keys: Optional[List[str]] = [], # TODO
+    conditioning_masks_keys: Optional[List[str]] = [], # TODO
+    config_yaml: dict = None, # TODO
     save_ckpt_path: str = "./checkpoints",
     log_interval: int = 100,
     resume_from_checkpoint: bool = True,
@@ -306,7 +315,7 @@ def main(
     pipeline.save_hyperparameters(
         {
             "denoiser": model.denoiser.config,
-            "vae": model.vae.config.to_dict(),
+            "vae": OmegaConf.to_container(model.vae.config_vqgan, resolve=True),
             "config_yaml": config_yaml,
             "training": training_config.to_dict(),
             "training_noise_scheduler": model.training_noise_scheduler.config,
@@ -317,11 +326,10 @@ def main(
     training_signature = (
         datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         + "-LBM-Surface"
-        + f"{os.environ['SLURM_JOB_ID']}"
-        + f"_{os.environ.get('SLURM_ARRAY_TASK_ID', 0)}"
     )
     dir_path = f"{save_ckpt_path}/logs/{training_signature}"
-    if os.environ["SLURM_PROCID"] == "0":
+    slurm_procid = os.environ.get("SLURM_PROCID", "0")
+    if slurm_procid == "0":
         os.makedirs(dir_path, exist_ok=True)
         if path_config is not None:
             shutil.copy(path_config, f"{save_ckpt_path}/config.yaml")
@@ -339,7 +347,7 @@ def main(
             ignore_states.append(param)
 
     # FSDP Strategy
-    strategy = FSDPStrategy(
+    strategy = FSDPStrategy( # TODO
         auto_wrap_policy=ModuleWrapPolicy(
             [
                 UNet2DConditionModel,
@@ -358,10 +366,21 @@ def main(
         ignored_states=ignore_states,
     )
 
+    import wandb
+    wandb.login(key='9ab49432fdba1dc80b8e9b71d7faca7e8b324e3e')
+    wandb.init(
+        project="fix_bug",
+        name=run_name
+    )
+
+    slurm_nprocs = int(os.environ.get("SLURM_NPROCS", "1"))
+    slurm_nnodes = int(os.environ.get("SLURM_NNODES", "1"))
+    trainer_devices = max(1, slurm_nprocs // slurm_nnodes)
+
     trainer = Trainer(
         accelerator="gpu",
-        devices=int(os.environ["SLURM_NPROCS"]) // int(os.environ["SLURM_NNODES"]),
-        num_nodes=int(os.environ["SLURM_NNODES"]),
+        devices=trainer_devices,
+        num_nodes=slurm_nnodes,
         strategy=strategy,
         default_root_dir="logs",
         logger=loggers.WandbLogger(
@@ -384,8 +403,8 @@ def main(
     )
 
     # data 
-    train_csv = "/mnt/disk2/htien/LBM/data/train.csv" # TODO 
-    val_csv = "data/val.csv" # TODO 
+    train_csv = "/home/huutien/5_folds_split_2D/fold_1_train_2d.csv" 
+    val_csv = "/home/huutien/5_folds_split_2D/fold_1_val_2d.csv" 
     data_module = MedicalImageTranslationDataModule(
         train_csv=train_csv,
         val_csv=val_csv,
@@ -394,7 +413,7 @@ def main(
     )
     data_module.setup()
 
-    trainer.fit(pipeline, data_module, ckpt_path=start_ckpt)
+    trainer.fit(pipeline, datamodule=data_module, ckpt_path=start_ckpt)
 
 
 def main_from_config(path_config: str = None):

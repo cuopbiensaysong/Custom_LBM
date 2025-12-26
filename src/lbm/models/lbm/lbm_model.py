@@ -134,10 +134,10 @@ class LBMModel(BaseModel):
             z_source = source_image
 
         # Get conditionings
-        conditioning = self._get_conditioning(batch, *args, **kwargs) # TODO check conditioning
+        conditioning = self._get_conditioning(batch, *args, **kwargs) # == {'cond': {}}
 
         # Sample a timestep
-        timestep = self._timestep_sampling(n_samples=z.shape[0], device=z.device) # TODO check timestep
+        timestep = self._timestep_sampling(n_samples=z.shape[0], device=z.device) # checked
         sigmas = None # ? check sigmas
 
         # Create interpolant
@@ -166,7 +166,7 @@ class LBMModel(BaseModel):
         )
 
         target = z_source - z
-        denoised_sample = noisy_sample - prediction * sigmas
+        # denoised_sample = noisy_sample - prediction * sigmas # chuyen xuong duoi 
         target_pixels = batch[self.target_key]
 
         # Compute loss
@@ -191,6 +191,7 @@ class LBMModel(BaseModel):
 
         else:
             pixel_loss = torch.zeros_like(latent_recon_loss)
+            denoised_sample = noisy_sample - prediction * sigmas
 
         return {
             "loss": loss.mean(),
@@ -477,7 +478,7 @@ class LBMModel(BaseModel):
                 input_shape = batch[self.target_key].shape[2:]
                 # rescale to latent size
                 input_shape = (
-                    self.vae.latent_channels,
+                    self.vae.config_vqgan.embed_dim,
                     input_shape[0] // self.vae.downsampling_factor,
                     input_shape[1] // self.vae.downsampling_factor,
                 )

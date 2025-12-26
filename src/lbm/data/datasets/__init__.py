@@ -3,7 +3,6 @@ A collection of :mod:`pytorch_lightning.LightningDataModule` used to train the m
 they can be used to create the dataloaders and setup the data pipelines.
 """
 
-from .dataset import DataModule
-from .datasets_config import DataModuleConfig
+from .dataset import MedicalImageTranslationDataModule
 
-__all__ = ["DataModule", "DataModuleConfig"]
+__all__ = ["MedicalImageTranslationDataModule"]
