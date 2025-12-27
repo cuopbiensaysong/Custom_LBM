@@ -48,7 +48,7 @@ pip install --upgrade gdown
 mkdir data 
 cd data
 gdown --folder "https://drive.google.com/drive/folders/15Iue3eqUajySEwN9Dl3wIUKCvXdWfWRj"
-gdown 1RWl7ZkR1hGcjMCRCf6WDNmQ5xHieRf8r
+gdown --id 1RWl7ZkR1hGcjMCRCf6WDNmQ5xHieRf8r
 cd ..
 sh delete_redundant_data.sh 
 ```
@@ -62,3 +62,16 @@ python examples/training/train_lbm_surface.py examples/training/config/surface.y
 *Note*: Make sure to update the relevant section of the `yaml` file to use your own data and log the results on your own [WandB](https://wandb.ai/site).
 
 
+run.sh
+
+#!/bin/bash
+#SBATCH --job-name=lbm        # Job name
+#SBATCH --output=./log_slurm/result/byol_cf10.txt      # Output file
+#SBATCH --error=./log_slurm/error/byol_cf10.txt       # Error file
+#SBATCH --ntasks=1               # Number of tasks (processes)
+#SBATCH --gpus=1                 # Number of GPUs per node
+#SBATCH --nodes=1               # Số node yêu cầu
+#SBATCH --cpus-per-task=20       # Số CPU cho mỗi task
+
+
+python train.py --image_folder /home/user01/aiotlab/baodq/Self-Supervised-Learning-comparisons/train_lightly/datasets/cifar10

@@ -296,7 +296,8 @@ def main(
         },
     )
     if (
-        os.path.exists(resume_logs_path)
+        resume_logs_path is not None 
+        and os.path.exists(resume_logs_path)
         and resume_from_checkpoint
         and "last.ckpt" in os.listdir(resume_logs_path)
     ):
