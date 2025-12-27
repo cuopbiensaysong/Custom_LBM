@@ -1,5 +1,5 @@
 # wandb
-wandb_project: lbm-ADNI-flows
+wandb_project: fix_bug
 timestep_sampling: custom_timesteps
 unet_input_channels: 4
 vae_num_channels: 4
@@ -13,8 +13,9 @@ bridge_noise_sigma: 0.005
 conditioning_images_keys: []
 conditioning_masks_keys: []
 
-train_csv: /home/huutien/5_folds_split_2D/fold_1_train_2d.csv
-val_csv: /home/huutien/5_folds_split_2D/fold_1_val_2d.csv
+root_dir: data/filter_ds
+train_csv: data/5_folds_split_2D/fold_1_train_2d.csv
+val_csv: data/5_folds_split_2D/fold_1_val_2d.csv
 # SHARDS_PATH_OR_URLS
 # train_shards:
 #   - pipe:cat PATH_TO_TRAIN_TARS
@@ -22,7 +23,7 @@ val_csv: /home/huutien/5_folds_split_2D/fold_1_val_2d.csv
 # validation_shards:
 #   - pipe:cat PATH_TO_VAL_TARS
 
-batch_size: 1
+batch_size: 4
 learning_rate: 4e-5
 optimizer: AdamW
 num_steps: [1, 4]

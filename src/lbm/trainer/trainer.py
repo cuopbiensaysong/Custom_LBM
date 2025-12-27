@@ -162,17 +162,73 @@ class TrainingPipeline(pl.LightningModule):
     def training_step(self, train_batch: Dict[str, Any], batch_idx: int) -> dict:
         model_output = self.model(train_batch)
         loss = model_output["loss"]
-        logging.info(f"loss: {loss}")
-        return {
-            "loss": loss,
-            "batch_idx": batch_idx,
-        }
+        if self.global_rank == 0:
+            logging.info(f"loss: {loss}")
+            # print(f"loss: {loss}")
+            # if "latent_recon_loss" in model_output:
+            #     print(f"latent_recon_loss: {model_output['latent_recon_loss']}")
+            # if "pixel_recon_loss" in model_output:
+            #     print(f"pixel_recon_loss: {model_output['pixel_recon_loss']}")
+
+        self.log(
+            "train/loss",
+            loss.detach(),
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            sync_dist=True,
+        )
+
+        if "latent_recon_loss" in model_output:
+            self.log(
+                "train/latent_recon_loss",
+                model_output["latent_recon_loss"].detach(),
+                on_step=True,
+                on_epoch=True,
+                sync_dist=True,
+            )
+
+        if "pixel_recon_loss" in model_output:
+            self.log(
+                "train/pixel_recon_loss",
+                model_output["pixel_recon_loss"].detach(),
+                on_step=True,
+                on_epoch=True,
+                sync_dist=True,
+            )
+
+        return loss
 
     def validation_step(self, val_batch: Dict[str, Any], val_idx: int) -> dict:
         loss = self.model(val_batch, device=self.device)["loss"]
 
         metrics = self.model.compute_metrics(val_batch)
 
+        self.log(
+            "val/loss",
+            loss.detach(),
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            sync_dist=True,
+        )
+
+        if metrics:
+            for metric_name, metric_value in metrics.items():
+                if isinstance(metric_value, torch.Tensor):
+                    metric_value = metric_value.detach()
+                self.log(
+                    f"val/{metric_name}",
+                    metric_value,
+                    on_step=False,
+                    on_epoch=True,
+                    sync_dist=True,
+                )
+
+        # if self.global_rank == 0:
+        #     print("validation_step")
+        #     print(f"loss validation_step: {loss}")
+        
         return {"loss": loss, "metrics": metrics}
 
     def log_samples(self, batch: Dict[str, Any]):

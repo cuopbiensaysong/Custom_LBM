@@ -117,8 +117,8 @@ class LBMModel(BaseModel):
         #     valid_mask_for_latent = valid_mask_for_latent.repeat((1, z.shape[1], 1, 1))
 
         # else:
-        valid_mask = torch.ones_like(batch[self.target_key]).bool() # TODO check valid_mask
-        valid_mask_for_latent = torch.ones_like(z).bool() # TODO check valid_mask_for_latent
+        # valid_mask = torch.ones_like(batch[self.target_key]).bool() # TODO checked 
+        # valid_mask_for_latent = torch.ones_like(z).bool() # TODO checked 
 
         source_image = batch[self.source_key]
         # source_image = torch.nn.functional.interpolate(
@@ -171,7 +171,8 @@ class LBMModel(BaseModel):
 
         # Compute loss
         if self.latent_loss_weight > 0:
-            loss = self.latent_loss(prediction, target.detach(), valid_mask_for_latent)
+            # loss = self.masked_latent_loss(prediction, target.detach(), valid_mask_for_latent)
+            loss = self.latent_loss(prediction, target.detach())
             latent_recon_loss = loss.mean()
 
         else:
@@ -184,8 +185,11 @@ class LBMModel(BaseModel):
                 sample=noisy_sample,
                 sigmas=sigmas,
             )
+            # pixel_loss = self.masked_pixel_loss(
+            #     denoised_sample, target_pixels.detach(), valid_mask
+            # )
             pixel_loss = self.pixel_loss(
-                denoised_sample, target_pixels.detach(), valid_mask
+                denoised_sample, target_pixels.detach()
             )
             loss += self.pixel_loss_weight * pixel_loss
 
@@ -201,7 +205,7 @@ class LBMModel(BaseModel):
             "noisy_sample": noisy_sample,
         }
 
-    def latent_loss(self, prediction, model_input, valid_latent_mask):
+    def masked_latent_loss(self, prediction, model_input, valid_latent_mask):
         if self.latent_loss_type == "l2":
             return torch.mean(
                 (
@@ -221,8 +225,96 @@ class LBMModel(BaseModel):
             raise NotImplementedError(
                 f"Loss type {self.latent_loss_type} not implemented"
             )
+    
+    def latent_loss(self, prediction, model_input):
+        if self.latent_loss_type == "l2":
+            return torch.mean(
+                (
+                    (prediction - model_input)
+                    ** 2
+                ).reshape(model_input.shape[0], -1),
+                1,
+            )
+        elif self.latent_loss_type == "l1":
+            return torch.mean(
+                torch.abs(
+                    prediction - model_input
+                ).reshape(model_input.shape[0], -1),
+                1,
+            )
+        else:
+            raise NotImplementedError(
+                f"Loss type {self.latent_loss_type} not implemented"
+            )
 
-    def pixel_loss(self, prediction, model_input, valid_mask):
+    def pixel_loss(self, prediction, model_input):
+        latent_crop = self.pixel_loss_max_size // self.vae.downsampling_factor
+        input_crop = self.pixel_loss_max_size
+
+        crop_h = max((prediction.shape[2] - latent_crop), 0)
+        crop_w = max((prediction.shape[3] - latent_crop), 0)
+
+        input_crop_h = max((model_input.shape[2] - self.pixel_loss_max_size), 0)
+        input_crop_w = max((model_input.shape[3] - self.pixel_loss_max_size), 0)
+
+        # image random cropping
+        if crop_h == 0:
+            offset_h = 0
+        else:
+            offset_h = torch.randint(0, crop_h, (1,)).item()
+
+        if crop_w == 0:
+            offset_w = 0
+        else:
+            offset_w = torch.randint(0, crop_w, (1,)).item()
+        input_offset_h = offset_h * self.vae.downsampling_factor
+        input_offset_w = offset_w * self.vae.downsampling_factor
+
+        prediction = prediction[
+            :,
+            :,
+            crop_h
+            - offset_h : min(crop_h - offset_h + latent_crop, prediction.shape[2]),
+            crop_w
+            - offset_w : min(crop_w - offset_w + latent_crop, prediction.shape[3]),
+        ]
+
+        model_input = model_input[
+            :,
+            :,
+            input_crop_h
+            - input_offset_h : min(
+                input_crop_h - input_offset_h + input_crop, model_input.shape[2]
+            ),
+            input_crop_w
+            - input_offset_w : min(
+                input_crop_w - input_offset_w + input_crop, model_input.shape[3]
+            ),
+        ]
+        decoded_prediction = self.vae.decode(prediction)# .clamp(-1, 1) # TODO check decoded_prediction
+
+        if self.pixel_loss_type == "l2":
+            return torch.mean(
+                (
+                    (decoded_prediction - model_input) ** 2
+                ).reshape(model_input.shape[0], -1),
+                1,
+            )
+
+        elif self.pixel_loss_type == "l1":
+            return torch.mean(
+                torch.abs(
+                    decoded_prediction - model_input
+                ).reshape(model_input.shape[0], -1),
+                1,
+            )
+
+        elif self.pixel_loss_type == "lpips":
+            return self.lpips_loss(
+                decoded_prediction, model_input
+            ).mean()
+
+    def masked_pixel_loss(self, prediction, model_input, valid_mask):
 
         latent_crop = self.pixel_loss_max_size // self.vae.downsampling_factor
         input_crop = self.pixel_loss_max_size

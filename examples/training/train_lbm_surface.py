@@ -1,7 +1,7 @@
 import datetime
 import logging
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1,2"
 import random
 import re
 import shutil
@@ -37,19 +37,19 @@ from lbm.trainer.utils import StateDictAdapter
 
 import debugpy
 
-debugpy.listen(5678)
-print("Waiting for debugger attach")
-debugpy.wait_for_client()
-print("Debugger attached")
+# debugpy.listen(5679)
+# print("Waiting for debugger attach")
+# debugpy.wait_for_client()
+# print("Debugger attached")
 
 
 def get_model(
     backbone_signature: str = "stabilityai/stable-diffusion-xl-base-1.0",
     vae_num_channels: int = 4,
     unet_input_channels: int = 4,
-    timestep_sampling: str = "log_normal", # TODO 
-    selected_timesteps: Optional[List[float]] = None, # TODO 
-    prob: Optional[List[float]] = None, # TODO 
+    timestep_sampling: str = "log_normal", 
+    selected_timesteps: Optional[List[float]] = None, 
+    prob: Optional[List[float]] = None, 
     conditioning_images_keys: Optional[List[str]] = [],
     conditioning_masks_keys: Optional[List[str]] = [],
     source_key: str = "bl",
@@ -166,12 +166,12 @@ def get_model(
     # Wrap conditioners and set to device
     conditioner = ConditionerWrapper(
         conditioners=conditioners,
-    ) # TODO
+    )
 
     
     
     vqgan_config_path = "src/lbm/models/vae/vqgan.yaml"
-    vqgan_checkpoint_path = "/home/huutien/vqgan/taming-transformers/logs/2025-12-23T16-12-31_custom_v4/checkpoints/epoch=000135.ckpt"
+    vqgan_checkpoint_path = "checkpoints/vqgan/epoch=000135.ckpt"
     vqgan = VQGANLBMWrapper(vqgan_config_path, vqgan_checkpoint_path)
     vqgan.freeze()
     vqgan = vqgan.to(torch.bfloat16)
@@ -217,35 +217,37 @@ def get_model(
 
 
 def main(
-    train_csv: str = "/home/huutien/5_folds_split_2D/fold_1_train_2d.csv",
-    val_csv: str = "/home/huutien/5_folds_split_2D/fold_1_val_2d.csv",
+    root_dir: str = "data/filter_ds",
+    train_csv: str = "data/5_folds_split_2D/fold_1_train_2d.csv",
+    val_csv: str = "data/5_folds_split_2D/fold_1_val_2d.csv",
     backbone_signature: str = "stabilityai/stable-diffusion-xl-base-1.0",
     vae_num_channels: int = 4,
     unet_input_channels: int = 4,
     source_key: str = "bl", 
     target_key: str = "m36", 
-    mask_key: str = "mask", # TODO 
+    mask_key: str = "mask", 
     wandb_project: str = "lbm-ADNI-flows",
     batch_size: int = 8,
-    num_steps: List[int] = [1, 2, 4], # ?
-    learning_rate: float = 5e-5,
-    learning_rate_scheduler: str = None,
-    learning_rate_scheduler_kwargs: dict = {},
-    optimizer: str = "AdamW",
-    optimizer_kwargs: dict = {},
-    timestep_sampling: str = "custom_timesteps", # TODO
-    logit_mean: float = 0.0, # TODO
-    logit_std: float = 1.0, # TODO
-    pixel_loss_type: str = "lpips", # TODO
-    latent_loss_type: str = "l2", # TODO
-    latent_loss_weight: float = 1.0, # TODO
-    pixel_loss_weight: float = 0.0, # TODO
-    selected_timesteps: List[float] = None, # TODO
-    prob: List[float] = None, # TODO
-    conditioning_images_keys: Optional[List[str]] = [], # TODO
-    conditioning_masks_keys: Optional[List[str]] = [], # TODO
-    config_yaml: dict = None, # TODO
+    num_steps: List[int] = [1, 2, 4], 
+    learning_rate: float = 5e-5, 
+    learning_rate_scheduler: str = None, # TODO : tuning 
+    learning_rate_scheduler_kwargs: dict = {}, # TODO : tuning 
+    optimizer: str = "AdamW", #  
+    optimizer_kwargs: dict = {}, # TODO : tuning 
+    timestep_sampling: str = "custom_timesteps",  
+    logit_mean: float = 0.0, 
+    logit_std: float = 1.0, 
+    pixel_loss_type: str = "lpips", 
+    latent_loss_type: str = "l2", 
+    latent_loss_weight: float = 1.0, 
+    pixel_loss_weight: float = 0.0, 
+    selected_timesteps: List[float] = None, 
+    prob: List[float] = None, 
+    conditioning_images_keys: Optional[List[str]] = [], # TODO : how about the idea of classifier-free guidance?
+    conditioning_masks_keys: Optional[List[str]] = [], # TODO : using the metadata from atlas to train ? 
+    config_yaml: dict = None, 
     save_ckpt_path: str = "./checkpoints",
+    resume_logs_path: str = None,
     log_interval: int = 100,
     resume_from_checkpoint: bool = True,
     max_epochs: int = 100,
@@ -283,25 +285,41 @@ def main(
         learning_rate=learning_rate,
         lr_scheduler_name=learning_rate_scheduler,
         lr_scheduler_kwargs=learning_rate_scheduler_kwargs,
-        log_keys=["image", "normal", "mask"],
+        log_keys=["bl", "m36", "mask"], # TODO : check if this is correct
         trainable_params=train_parameters,
         optimizer_name=optimizer,
         optimizer_kwargs=optimizer_kwargs,
         log_samples_model_kwargs={
             "input_shape": None,
             "num_steps": num_steps,
+            "max_samples": 1,
         },
     )
     if (
-        os.path.exists(save_ckpt_path)
+        os.path.exists(resume_logs_path)
         and resume_from_checkpoint
-        and "last.ckpt" in os.listdir(save_ckpt_path)
+        and "last.ckpt" in os.listdir(resume_logs_path)
     ):
-        start_ckpt = f"{save_ckpt_path}/last.ckpt"
+        start_ckpt = f"{resume_logs_path}/last.ckpt"
         print(f"Resuming from checkpoint: {start_ckpt}")
+        run_name = resume_logs_path.split("/")[-1]
+        
 
     else:
         start_ckpt = None
+        run_name = (
+        datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        + "-ADNI-flows"
+    )
+
+
+    dir_path = f"{save_ckpt_path}/logs/{run_name}"
+    slurm_procid = os.environ.get("SLURM_PROCID", "0")
+    if slurm_procid == "0":
+        os.makedirs(dir_path, exist_ok=True)
+        if path_config is not None:
+            shutil.copy(path_config, f"{dir_path}/config.yaml")
+        
 
     pipeline = TrainingPipeline(model=model, pipeline_config=training_config)
 
@@ -323,17 +341,7 @@ def main(
         }
     )
 
-    training_signature = (
-        datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        + "-LBM-Surface"
-    )
-    dir_path = f"{save_ckpt_path}/logs/{training_signature}"
-    slurm_procid = os.environ.get("SLURM_PROCID", "0")
-    if slurm_procid == "0":
-        os.makedirs(dir_path, exist_ok=True)
-        if path_config is not None:
-            shutil.copy(path_config, f"{save_ckpt_path}/config.yaml")
-    run_name = training_signature
+    
 
     # Ignore parameters unused during training
     ignore_states = []
@@ -347,7 +355,7 @@ def main(
             ignore_states.append(param)
 
     # FSDP Strategy
-    strategy = FSDPStrategy( # TODO
+    strategy = FSDPStrategy( # TODO / Exploration
         auto_wrap_policy=ModuleWrapPolicy(
             [
                 UNet2DConditionModel,
@@ -366,35 +374,33 @@ def main(
         ignored_states=ignore_states,
     )
 
-    import wandb
-    wandb.login(key='9ab49432fdba1dc80b8e9b71d7faca7e8b324e3e')
-    wandb.init(
-        project="fix_bug",
-        name=run_name
-    )
-
     slurm_nprocs = int(os.environ.get("SLURM_NPROCS", "1"))
     slurm_nnodes = int(os.environ.get("SLURM_NNODES", "1"))
-    trainer_devices = max(1, slurm_nprocs // slurm_nnodes)
+
+    callbacks = [
+        LearningRateMonitor(logging_interval="step"),
+        ModelCheckpoint(
+            dirpath=dir_path,
+            monitor="val/loss",
+            mode="min",
+            save_top_k=1,
+            save_last=True,
+            filename="{epoch:02d}-{step}",
+        ),
+    ]
+    if log_interval and log_interval > 0:
+        callbacks.insert(0, WandbSampleLogger(log_batch_freq=log_interval))
 
     trainer = Trainer(
         accelerator="gpu",
-        devices=trainer_devices,
-        num_nodes=slurm_nnodes,
+        devices=2,
+        num_nodes=1,
         strategy=strategy,
         default_root_dir="logs",
         logger=loggers.WandbLogger(
-            project=wandb_project, offline=False, name=run_name, save_dir=save_ckpt_path
+            project=wandb_project, offline=False, name=run_name, save_dir=dir_path
         ),
-        callbacks=[
-            WandbSampleLogger(log_batch_freq=log_interval),
-            LearningRateMonitor(logging_interval="step"),
-            ModelCheckpoint(
-                dirpath=save_ckpt_path,
-                every_n_train_steps=save_interval,
-                save_last=True,
-            ),
-        ],
+        callbacks=callbacks,
         num_sanity_val_steps=0,
         precision="bf16-mixed",
         limit_val_batches=2,
@@ -403,13 +409,12 @@ def main(
     )
 
     # data 
-    train_csv = "/home/huutien/5_folds_split_2D/fold_1_train_2d.csv" 
-    val_csv = "/home/huutien/5_folds_split_2D/fold_1_val_2d.csv" 
     data_module = MedicalImageTranslationDataModule(
         train_csv=train_csv,
         val_csv=val_csv,
         batch_size=batch_size,
-        num_workers=8,
+        num_workers=0,
+        root_dir=root_dir,
     )
     data_module.setup()
 

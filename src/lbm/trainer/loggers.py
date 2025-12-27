@@ -127,7 +127,6 @@ class WandbSampleLogger(Callback):
         self.log_samples(trainer, pl_module, outputs, batch, batch_idx, split="val")
         self._process_logs(trainer, outputs, split="val")
 
-    @rank_zero_only
     @torch.no_grad()
     def log_samples(
         self,
@@ -138,27 +137,37 @@ class WandbSampleLogger(Callback):
         batch_idx: int,
         split: str = "train",
     ) -> None:
-        if hasattr(pl_module, "log_samples"):
-            if batch_idx % self.log_batch_freq == 0:
-                is_training = pl_module.training
-                if is_training:
-                    pl_module.eval()
-
-                logs = pl_module.log_samples(batch)
-                logs = self._process_logs(trainer, logs, split=split)
-
-                if is_training:
-                    pl_module.train()
-        else:
+        if not hasattr(pl_module, "log_samples"):
             logging.warning(
                 "log_img method not found in LightningModule. Skipping image logging."
             )
+            return
+
+        if (
+            self.log_batch_freq
+            and self.log_batch_freq > 0
+            and (batch_idx + 1) % self.log_batch_freq == 0
+        ):
+            is_training = pl_module.training
+            if is_training:
+                pl_module.eval()
+
+            # Run sampling on all ranks to avoid FSDP collective mismatches;
+            # only rank 0 will actually push to WandB inside _process_logs.
+            logs = pl_module.log_samples(batch)
+            self._process_logs(trainer, logs, split=split)
+
+            if is_training:
+                pl_module.train()
 
     @rank_zero_only
     def _process_logs(
         self, trainer, logs: Dict[str, Any], rescale=True, split="train"
     ) -> Dict[str, Any]:
         for key, value in logs.items():
+            if key == "loss":
+                # loss is logged via Lightning; avoid duplicating as loss/val
+                continue
             if isinstance(value, torch.Tensor):
                 value = value.detach().cpu()
                 if value.dim() == 4:
@@ -242,7 +251,6 @@ class TensorBoardSampleLogger(Callback):
         self.log_samples(trainer, pl_module, outputs, batch, batch_idx, split="val")
         self._process_logs(trainer, outputs, split="val")
 
-    @rank_zero_only
     @torch.no_grad()
     def log_samples(
         self,
@@ -253,27 +261,37 @@ class TensorBoardSampleLogger(Callback):
         batch_idx: int,
         split: str = "train",
     ) -> None:
-        if hasattr(pl_module, "log_samples"):
-            if batch_idx % self.log_batch_freq == 0:
-                is_training = pl_module.training
-                if is_training:
-                    pl_module.eval()
-
-                logs = pl_module.log_samples(batch)
-                logs = self._process_logs(trainer, logs, split=split)
-
-                if is_training:
-                    pl_module.train()
-        else:
+        if not hasattr(pl_module, "log_samples"):
             logging.warning(
                 "log_img method not found in LightningModule. Skipping image logging."
             )
+            return
+
+        if (
+            self.log_batch_freq
+            and self.log_batch_freq > 0
+            and (batch_idx + 1) % self.log_batch_freq == 0
+        ):
+            is_training = pl_module.training
+            if is_training:
+                pl_module.eval()
+
+            # Run sampling on all ranks to satisfy FSDP collectives;
+            # only rank 0 will emit logs in _process_logs.
+            logs = pl_module.log_samples(batch)
+            self._process_logs(trainer, logs, split=split)
+
+            if is_training:
+                pl_module.train()
 
     @rank_zero_only
     def _process_logs(
         self, trainer, logs: Dict[str, Any], rescale=True, split="train"
     ) -> Dict[str, Any]:
         for key, value in logs.items():
+            if key == "loss":
+                # loss is logged via Lightning; avoid duplicating as loss/val
+                continue
             if isinstance(value, torch.Tensor):
                 value = value.detach().cpu()
                 if value.dim() == 4:

@@ -42,7 +42,16 @@ See the trained models on the HF Hub 🤗
 
 ### Data: 
 
-
+To download data: 
+```bash
+pip install --upgrade gdown
+mkdir data 
+cd data
+gdown --folder "https://drive.google.com/drive/folders/15Iue3eqUajySEwN9Dl3wIUKCvXdWfWRj"
+gdown 1RWl7ZkR1hGcjMCRCf6WDNmQ5xHieRf8r
+cd ..
+sh delete_redundant_data.sh 
+```
 
 To train the model, you can use the following command:
 

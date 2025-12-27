@@ -7,6 +7,5 @@ examples/inference/ckpts/*
 examples/inference/examples/*
 envs/*
 checkpoints/*
-*.sh
 wandb/*
 data/*

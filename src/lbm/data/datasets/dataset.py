@@ -45,7 +45,7 @@ class MedicalImageTranslationDataModule(pl.LightningDataModule):
         val_csv: str, 
         batch_size: int = 16, 
         num_workers: int = 4,
-        root_dir: str = "/home/huutien/filter_ds"
+        root_dir: str = "data/filter_ds"
     ):
         super().__init__()
         self.train_csv = train_csv
