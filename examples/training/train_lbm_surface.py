@@ -7,7 +7,6 @@ import re
 import shutil
 from typing import List, Optional
 
-import braceexpand
 import fire
 import torch
 import yaml
@@ -254,6 +253,7 @@ def main(
     bridge_noise_sigma: float = 0.005,
     save_interval: int = 1000,
     path_config: str = None,
+    run_name: str = None,
 ):
     model = get_model(
         backbone_signature=backbone_signature,
@@ -303,14 +303,15 @@ def main(
     ):
         start_ckpt = f"{resume_logs_path}/last.ckpt"
         print(f"Resuming from checkpoint: {start_ckpt}")
-        run_name = resume_logs_path.split("/")[-1]
+        run_name = run_name + "_" + resume_logs_path.split("/")[-1] if run_name is not None else resume_logs_path.split("/")[-1]
         
 
     else:
         start_ckpt = None
-        run_name = (
+        run_name = run_name + "_" + (
         datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        + "-ADNI-flows"
+        + "-ADNI-flows" if run_name is not None 
+        else datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + "-ADNI-flows"
     )
 
 

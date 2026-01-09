@@ -23,18 +23,18 @@ def get_model(
     save_dir: Optional[str] = None,
     torch_dtype: torch.dtype = torch.bfloat16,
     device: str = "cuda",
+    config_path: Optional[str] = None,
 ) -> LBMModel:
-    """Download the model from the model directory using either a local path or a path to HuggingFace Hub
+    """Download or load a model from a directory or single weight file.
 
     Args:
-        model_dir (str): The path to the model directory containing the model weights and config, can be a local path or a path to HuggingFace Hub
-        save_dir (Optional[str]): The local path to save the model if downloading from HuggingFace Hub. Defaults to None.
-        torch_dtype (torch.dtype): The torch dtype to use for the model. Defaults to torch.bfloat16.
-        device (str): The device to use for the model. Defaults to "cuda".
-
-    Returns:
-        LBMModel: The loaded model
+        model_dir (str): Directory containing config + weights or a path to a single ckpt/safetensors file.
+        save_dir (Optional[str]): Local path to save the model if downloading from HF Hub.
+        torch_dtype (torch.dtype): Torch dtype to use.
+        device (str): Target device for the model.
+        config_path (Optional[str]): Explicit path to a config yaml. Required when model_dir is a single file.
     """
+    # If model_dir is a remote repo id, download it first
     if not os.path.exists(model_dir):
         local_dir = snapshot_download(
             model_dir,
@@ -42,36 +42,60 @@ def get_model(
         )
         model_dir = local_dir
 
-    model_files = os.listdir(model_dir)
+    # Determine if a single file or a directory is passed
+    if os.path.isfile(model_dir):
+        if config_path is None:
+            raise ValueError("config_path must be provided when model_dir is a file.")
+        model_root = os.path.dirname(model_dir)
+        model_files = [os.path.basename(model_dir)]
+    else:
+        model_root = model_dir
+        model_files = os.listdir(model_dir)
 
-    # check yaml config file is present
-    yaml_file = [f for f in model_files if f.endswith(".yaml")]
-    if len(yaml_file) == 0:
-        raise ValueError("No yaml file found in the model directory.")
+    # Resolve config file
+    if config_path is not None:
+        yaml_file_path = config_path
+    else:
+        yaml_candidates = [f for f in model_files if f.endswith(".yaml")]
+        if len(yaml_candidates) == 0:
+            raise ValueError("No yaml file found in the model directory.")
+        yaml_file_path = os.path.join(model_root, yaml_candidates[0])
 
-    # check safetensors weights file is present
-    safetensors_files = sorted([f for f in model_files if f.endswith(".safetensors")])
+    # Resolve weight files
+    safetensors_files = sorted(
+        [f for f in model_files if f.endswith(".safetensors")]
+    )
     ckpt_files = sorted([f for f in model_files if f.endswith(".ckpt")])
+    if os.path.isfile(model_dir):
+        if model_dir.endswith(".safetensors"):
+            safetensors_files = [os.path.basename(model_dir)]
+            ckpt_files = []
+        elif model_dir.endswith(".ckpt"):
+            ckpt_files = [os.path.basename(model_dir)]
+            safetensors_files = []
+        else:
+            raise ValueError("Unsupported weight file. Use .ckpt or .safetensors.")
+
     if len(safetensors_files) == 0 and len(ckpt_files) == 0:
         raise ValueError("No safetensors or ckpt file found in the model directory")
 
-    if len(model_files) == 0:
-        raise ValueError("No model files found in the model directory")
-
-    with open(os.path.join(model_dir, yaml_file[0]), "r") as f:
+    with open(yaml_file_path, "r") as f:
         config = yaml.safe_load(f)
 
     model = _get_model_from_config(**config, torch_dtype=torch_dtype)
 
     if len(safetensors_files) > 0:
-        logging.info(f"Loading safetensors file: {safetensors_files[-1]}")
-        sd = load_file(os.path.join(model_dir, safetensors_files[-1]))
+        weight_path = os.path.join(model_root, safetensors_files[-1])
+        logging.info(f"Loading safetensors file: {weight_path}")
+        sd = load_file(weight_path)
         model.load_state_dict(sd, strict=True)
     elif len(ckpt_files) > 0:
-        logging.info(f"Loading ckpt file: {ckpt_files[-1]}")
+        weight_path = os.path.join(model_root, ckpt_files[-1])
+        logging.info(f"Loading ckpt file: {weight_path}")
         sd = torch.load(
-            os.path.join(model_dir, ckpt_files[-1]),
+            weight_path,
             map_location="cpu",
+            weights_only=False,  # allow loading TrainingConfig globals (PyTorch 2.6+ default changed)
         )["state_dict"]
         sd = {k[6:]: v for k, v in sd.items() if k.startswith("model.")}
         model.load_state_dict(
@@ -163,31 +187,17 @@ def _get_model_from_config(
         addition_embed_type_num_heads=64,
     ).to(torch_dtype)
 
-    if conditioning_images_keys != [] or conditioning_masks_keys != []:
-
-        latents_concat_embedder_config = LatentsConcatEmbedderConfig(
-            image_keys=conditioning_images_keys,
-            mask_keys=conditioning_masks_keys,
-        )
-        latent_concat_embedder = LatentsConcatEmbedder(latents_concat_embedder_config)
-        latent_concat_embedder.freeze()
-        conditioners.append(latent_concat_embedder)
-
         # Wrap conditioners and set to device
     conditioner = ConditionerWrapper(
         conditioners=conditioners,
     )
+    from lbm.models.vae import VQGANLBMWrapper
+    vqgan_config_path = "src/lbm/models/vae/vqgan.yaml"
+    vqgan_checkpoint_path = "checkpoints/vqgan/epoch=000135.ckpt"
+    vqgan = VQGANLBMWrapper(vqgan_config_path, vqgan_checkpoint_path)
+    vqgan.freeze()
+    vqgan = vqgan.to(torch_dtype)
 
-    ## VAE ##
-    # Get VAE model
-    vae_config = AutoencoderKLDiffusersConfig(
-        version=backbone_signature,
-        subfolder="vae",
-        tiling_size=(128, 128),
-    )
-    vae = AutoencoderKLDiffusers(vae_config).to(torch_dtype)
-    vae.freeze()
-    vae.to(torch_dtype)
 
     ## Diffusion Model ##
     # Get diffusion model
@@ -212,10 +222,10 @@ def _get_model_from_config(
     )
 
     model = LBMModel(
-        config,
+        config, 
         denoiser=denoiser,
         sampling_noise_scheduler=sampling_noise_scheduler,
-        vae=vae,
+        vae=vqgan,
         conditioner=conditioner,
     ).to(torch_dtype)
 

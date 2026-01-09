@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=0 python examples/inference/inference.py --test_csv_path data/5_folds_split_2D/fold_1_test_2d.csv --root_dir data/filter_ds --output_dir results/fold_1_custom_ckpt_4steps_last_ckpt --num_inference_steps 4 --ckpt_path checkpoints/logs/2025-12-27_14-57-15-ADNI-flows/last.ckpt --config_path checkpoints/logs/2025-12-27_14-57-15-ADNI-flows/config.yaml

@@ -9,3 +9,5 @@ envs/*
 checkpoints/*
 wandb/*
 data/*
+results/*
+data/*

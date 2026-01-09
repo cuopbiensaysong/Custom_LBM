@@ -11,44 +11,6 @@ from .vqgan import VQModel
 from omegaconf import OmegaConf, DictConfig, ListConfig
 
 
-class DiagonalGaussianDistributionLike:
-    """
-    A dummy distribution class that adapts deterministic VQGAN outputs to the 
-    probabilistic interface expected by LBM/Diffusers.
-    
-    This class mimics `diffusers.models.autoencoders.vae.DiagonalGaussianDistribution`.
-    Since VQGAN is deterministic, the 'sample' is simply the latent tensor itself.
-    """
-    def __init__(self, parameters: torch.Tensor, deterministic: bool = True):
-        self.parameters = parameters
-        self.deterministic = deterministic
-        # Mimic VAE attributes to prevent AttributeErrors in training loops
-        self.mean = parameters 
-        self.logvar = torch.zeros_like(parameters) - 30.0 # Effectively zero variance
-        self.std = torch.zeros_like(parameters) + 1e-6
-
-    def sample(self, generator: Optional[torch.Generator] = None) -> torch.Tensor:
-        """
-        Returns the latent tensor. The generator argument is ignored as the process
-        is deterministic (or quantization noise is already applied).
-        """
-        return self.parameters
-
-    def mode(self) -> torch.Tensor:
-        return self.parameters
-        
-    def kl(self, other=None) -> torch.Tensor:
-        # Return zero KL divergence since we are not optimizing a variational bound here
-        return torch.tensor(0.0, device=self.parameters.device)
-
-class AutoencoderOutput:
-    """
-    Mimics `diffusers.models.modeling_outputs.AutoencoderKLOutput`.
-    Holds the 'latent_dist' object.
-    """
-    def __init__(self, latent_dist: DiagonalGaussianDistributionLike):
-        self.latent_dist = latent_dist
-
 class VQGANLBMWrapper(ModelMixin, ConfigMixin):
     """
     A robust adapter class integrating a custom 'taming-transformers' VQGAN into

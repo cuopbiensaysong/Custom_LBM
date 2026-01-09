@@ -507,6 +507,7 @@ class LBMModel(BaseModel):
             enumerate(self.sampling_noise_scheduler.timesteps), disable=not verbose
         ):
             if hasattr(self.sampling_noise_scheduler, "scale_model_input"):
+                print("scale_model_input....")
                 denoiser_input = self.sampling_noise_scheduler.scale_model_input(
                     sample, t
                 )
